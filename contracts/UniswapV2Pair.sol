@@ -1,5 +1,9 @@
-pragma solidity =0.5.16;
+pragma solidity =0.5.16;   //select solidity version 
 
+
+/*
+import Interface(inheritance, execute by casting), Contracts, Libraries
+ */
 import './interfaces/IUniswapV2Pair.sol';
 import './UniswapV2ERC20.sol';
 import './libraries/Math.sol';
@@ -8,26 +12,38 @@ import './interfaces/IERC20.sol';
 import './interfaces/IUniswapV2Factory.sol';
 import './interfaces/IUniswapV2Callee.sol';
 
-contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
-    using SafeMath  for uint;
-    using UQ112x112 for uint224;
 
-    uint public constant MINIMUM_LIQUIDITY = 10**3;
-    bytes4 private constant SELECTOR = bytes4(keccak256(bytes('transfer(address,uint256)')));
+contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {   //inherit interface & UniswapV2ERC20(>> Uni2 LP has permit fn )
 
-    address public factory;
-    address public token0;
-    address public token1;
+    // Use Libraries for specific data type 
+    using SafeMath  for uint;    // SafeMath - check overflow, underflow 
+    using UQ112x112 for uint224; // UQ112x112 - floating point expression 
+
+    uint public constant MINIMUM_LIQUIDITY = 10**3; // Min liquidity >= 1000 as 1000 is burned 
+    bytes4 private constant SELECTOR = bytes4(keccak256(bytes('transfer(address,uint256)'))); 
+
+    address public factory; // public > view function abi generated, Factory = msg.sender 
+    address public token0;  // Token0, Token1 = ERC20 
+    address public token1;  
+
+/*
+reserve0 = amt of token0, reserve1 = amt of token1 
+blockTimestampLast = uint32(block.timestamp) block.timestamp = utc time 
+ */
 
     uint112 private reserve0;           // uses single storage slot, accessible via getReserves
     uint112 private reserve1;           // uses single storage slot, accessible via getReserves
     uint32  private blockTimestampLast; // uses single storage slot, accessible via getReserves
-
+/*
+if changes, time weighted price is calculated 
+kLast = reserve0 * reserve1 [last]
+ */
     uint public price0CumulativeLast;
     uint public price1CumulativeLast;
     uint public kLast; // reserve0 * reserve1, as of immediately after the most recent liquidity event
 
-    uint private unlocked = 1;
+    uint private unlocked = 1; // not ready to start 
+
     modifier lock() {
         require(unlocked == 1, 'UniswapV2: LOCKED');
         unlocked = 0;
@@ -58,6 +74,9 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     );
     event Sync(uint112 reserve0, uint112 reserve1);
 
+// initialize 할 떄 token0, token1를 넣는다. 
+// msg.sender는 당연히 
+
     constructor() public {
         factory = msg.sender;
     }
@@ -69,6 +88,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         token1 = _token1;
     }
 
+    // 백서에 계산한대로 코드화함 
     // update reserves and, on the first call per block, price accumulators
     function _update(uint balance0, uint balance1, uint112 _reserve0, uint112 _reserve1) private {
         require(balance0 <= uint112(-1) && balance1 <= uint112(-1), 'UniswapV2: OVERFLOW');
@@ -85,13 +105,16 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         emit Sync(reserve0, reserve1);
     }
 
-    // if fee is on, mint liquidity equivalent to 1/6th of the growth in sqrt(k)
+    // 백서에 나온 공식을 코드화 
+    // f[1,2] = 1 - root(k1) / root(k2) - (4)
+    // s[m] / s[m] + s1 = p * f[1],[2]   |     s[m] = root(k2) - root(k1) / 5 * root(k2) + root(k1) - (5)
+    // if fee is on, mint liquidity equivalent to 1/6th of the growth in sqrt(k)  
     function _mintFee(uint112 _reserve0, uint112 _reserve1) private returns (bool feeOn) {
         address feeTo = IUniswapV2Factory(factory).feeTo();
         feeOn = feeTo != address(0);
         uint _kLast = kLast; // gas savings
         if (feeOn) {
-            if (_kLast != 0) {
+            if (_kLast != 0) { //처음 만들어진 것일 수도 있으니 0이 아닌지 체크
                 uint rootK = Math.sqrt(uint(_reserve0).mul(_reserve1));
                 uint rootKLast = Math.sqrt(_kLast);
                 if (rootK > rootKLast) {
@@ -101,8 +124,8 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
                     if (liquidity > 0) _mint(feeTo, liquidity);
                 }
             }
-        } else if (_kLast != 0) {
-            kLast = 0;
+        } else if (_kLast != 0) { //처음 만들어진 것일 수도 있으니 0이 아닌지 체크
+            kLast = 0; //사실상 k1, 이제 업데이트를 해야한다. 
         }
     }
 
@@ -156,6 +179,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     }
 
     // this low-level function should be called from a contract which performs important safety checks
+    // why all outs >> as data imply input 
     function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external lock {
         require(amount0Out > 0 || amount1Out > 0, 'UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT');
         (uint112 _reserve0, uint112 _reserve1,) = getReserves(); // gas savings
@@ -163,7 +187,8 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
 
         uint balance0;
         uint balance1;
-        { // scope for _token{0,1}, avoids stack too deep errors
+        { // scope for _token{0,1}, avoids stack too deep errors, 스택에 대한 한계가 작음
+          
         address _token0 = token0;
         address _token1 = token1;
         require(to != _token0 && to != _token1, 'UniswapV2: INVALID_TO');
@@ -187,6 +212,8 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     }
 
     // force balances to match reserves
+    // address에 들어간 balance와 reserve는 다르다. 그걸 강제적으로 맞춰준다. 
+    // reserve를 balance에 맞춘다
     function skim(address to) external lock {
         address _token0 = token0; // gas savings
         address _token1 = token1; // gas savings
